@@ -3,19 +3,33 @@ import uuid
 import hashlib
 from PyPDF2 import PdfReader
 from db import get_connection
-
 from vector_store import get_or_create_vector_store
-client = get_or_create_vector_store()
-
 from embedder import get_embedding
+
+client = get_or_create_vector_store()
 
 def extract_text_from_pdf(path):
     try:
         reader = PdfReader(path)
-        return "\n".join(page.extract_text() or '' for page in reader.pages)
+
+        # Verificar si el PDF está cifrado
+        if reader.is_encrypted:
+            try:
+                reader.decrypt("")  # Intenta desbloquear con contraseña vacía
+            except Exception:
+                raise Exception("Archivo PDF protegido con contraseña, no se puede procesar.")
+
+            if reader.is_encrypted:
+                raise Exception("Archivo PDF sigue cifrado, no se puede leer.")
+
+        text = "\n".join(page.extract_text() or '' for page in reader.pages)
+
+        return text.strip()
+
     except Exception as e:
         print(f"❌ Error leyendo PDF {path}: {e}")
         raise
+
 
 def index_document(qdrant_id, text, metadata):
     try:
@@ -33,17 +47,22 @@ def index_document(qdrant_id, text, metadata):
         print(f"❌ Error al indexar en Qdrant: {e}")
         raise
 
+
 def handle_invalid_pdf(path, doc_id, user_id, cursor, conn):
     print(f"🗑️ Eliminando archivo inválido: {path}")
     try:
-        os.remove(path)
-        print("✅ Archivo eliminado.")
+        if os.path.exists(path):
+            os.remove(path)
+            print("✅ Archivo eliminado.")
+        else:
+            print("⚠️ Archivo ya no existe.")
     except Exception as e:
         print(f"❌ Error al eliminar archivo: {e}")
 
     cursor.execute("UPDATE uploaded_documents SET indexed = -1 WHERE id = %s", (doc_id,))
     conn.commit()
     print(f"📢 (Simulado) Notificar a usuario {user_id} que su archivo es inválido.")
+
 
 def process_pending_documents():
     conn = get_connection()
@@ -66,12 +85,10 @@ def process_pending_documents():
             content = extract_text_from_pdf(abs_path)
 
             if content.strip():
-                print("✅ Texto extraído:", content[:300], "...")
+                print(f"✅ Texto extraído: {content[:300]} ...")
 
-                # Calcular hash del contenido
                 content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-                # Verificar si el hash ya existe
                 cursor.execute("""
                     SELECT COUNT(*) as count FROM uploaded_documents
                     WHERE content_hash = %s AND indexed = 1
@@ -80,7 +97,6 @@ def process_pending_documents():
                     print("⏩ Documento con contenido idéntico ya fue indexado. Se omite.")
                     continue
 
-                # Indexar si no está duplicado
                 qdrant_id = str(uuid.uuid4())
 
                 index_document(qdrant_id, content, {
@@ -90,7 +106,6 @@ def process_pending_documents():
                     "bot_template_id": doc['bot_template_id'],
                 })
 
-                # Actualizar base de datos con hash y estado indexado
                 cursor.execute("""
                     UPDATE uploaded_documents 
                     SET indexed = 1, qdrant_id = %s, content_hash = %s, extracted_text = %s
@@ -98,8 +113,9 @@ def process_pending_documents():
                 """, (qdrant_id, content_hash, content[:10000], doc['id']))
 
                 conn.commit()
+
             else:
-                print("⚠️ No se pudo extraer texto del archivo.")
+                print("⚠️ No se pudo extraer texto del archivo (vacío o ilegible).")
                 handle_invalid_pdf(abs_path, doc['id'], doc['user_id'], cursor, conn)
 
         except Exception as e:
