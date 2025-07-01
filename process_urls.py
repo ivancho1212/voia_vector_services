@@ -4,7 +4,7 @@ from db import get_connection
 from vector_store import get_or_create_vector_store
 from embedder import get_embedding
 from services.document_processor import process_url
-
+from tag_utils import infer_tags_from_payload  # ✅ Importación necesaria
 
 def process_pending_urls():
     print("🚀 Iniciando procesamiento de URLs pendientes...")
@@ -80,18 +80,27 @@ def process_pending_urls():
 
                 qdrant_id = str(uuid.uuid4())
 
+                # 🎯 Construir payload base
+                payload = {
+                    "url": url,
+                    "type": result["type"],
+                    "user_id": url_item.get('user_id'),
+                    "bot_id": url_item.get('bot_id'),
+                    "bot_template_id": url_item.get('bot_template_id'),
+                }
+
+                # 🏷️ Aplicar etiquetas
+                tags = infer_tags_from_payload(payload, content)
+                payload.update(tags)
+
+                print(f"🏷️ Etiquetas inferidas: {tags}")  # Opcional para debug
+
                 client.upsert(
                     collection_name="voia_vectors",
                     points=[{
                         "id": qdrant_id,
                         "vector": get_embedding(content),
-                        "payload": {
-                            "url": url,
-                            "type": result["type"],
-                            "user_id": url_item.get('user_id'),
-                            "bot_id": url_item.get('bot_id'),
-                            "bot_template_id": url_item.get('bot_template_id'),
-                        }
+                        "payload": payload
                     }]
                 )
 

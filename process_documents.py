@@ -5,6 +5,7 @@ from PyPDF2 import PdfReader
 from db import get_connection
 from vector_store import get_or_create_vector_store
 from embedder import get_embedding
+from tag_utils import infer_tags_from_payload
 
 client = get_or_create_vector_store()
 
@@ -99,12 +100,18 @@ def process_pending_documents():
 
                 qdrant_id = str(uuid.uuid4())
 
-                index_document(qdrant_id, content, {
+                payload = {
                     "file_name": doc['file_name'],
                     "user_id": doc['user_id'],
                     "bot_id": doc['bot_id'],
                     "bot_template_id": doc['bot_template_id'],
-                })
+                }
+
+                tags = infer_tags_from_payload(payload, content)
+                payload.update(tags)
+
+                index_document(qdrant_id, content, payload)
+
 
                 cursor.execute("""
                     UPDATE uploaded_documents 

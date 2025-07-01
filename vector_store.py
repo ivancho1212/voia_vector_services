@@ -1,6 +1,6 @@
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct, PointIdsList
-
+from tag_utils import infer_tags_from_payload  # ✅ IMPORTACIÓN AQUÍ
 
 COLLECTION_NAME = "voia_vectors"
 
@@ -31,7 +31,15 @@ def is_in_qdrant(qdrant_id: str) -> bool:
         return False
 
 
-def add_point_to_qdrant(qdrant_id: str, vector: list, payload: dict = {}):
+def add_point_to_qdrant(qdrant_id: str, vector: list, payload: dict = {}, extracted_text: str = ""):
+    if is_in_qdrant(qdrant_id):
+        print(f"⏭️ Punto con ID {qdrant_id} ya existe en Qdrant. No se insertará de nuevo.")
+        return
+
+    # 🏷️ Agregar etiquetas inferidas al payload
+    tags = infer_tags_from_payload(payload, extracted_text)
+    payload.update(tags)
+
     client.upsert(
         collection_name=COLLECTION_NAME,
         points=[
@@ -42,7 +50,7 @@ def add_point_to_qdrant(qdrant_id: str, vector: list, payload: dict = {}):
             )
         ]
     )
-    print(f"✅ Punto {qdrant_id} insertado en Qdrant.")
+    print(f"✅ Punto {qdrant_id} insertado en Qdrant con etiquetas: {tags}")
 
 
 def delete_point_from_qdrant(qdrant_id: str):
@@ -56,7 +64,6 @@ def delete_point_from_qdrant(qdrant_id: str):
         print(f"❌ Error al eliminar punto {qdrant_id}: {e}")
 
 
-# ✅ Nueva función: Listar puntos en Qdrant
 def list_all_points(limit=10):
     points, next_page = client.scroll(
         collection_name=COLLECTION_NAME,

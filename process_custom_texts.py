@@ -3,6 +3,7 @@ import hashlib
 from db import get_connection
 from vector_store import get_or_create_vector_store
 from embedder import get_embedding
+from tag_utils import infer_tags_from_payload  # ✅ Importamos etiquetas
 
 client = get_or_create_vector_store()
 
@@ -58,18 +59,27 @@ def process_pending_custom_texts():
 
             qdrant_id = str(uuid.uuid4())
 
+            # 🧠 Construimos payload
+            payload = {
+                "type": "custom_text",
+                "user_id": item.get('user_id'),
+                "bot_id": item.get('bot_id'),
+                "bot_template_id": item.get('bot_template_id'),
+                "source": "training_custom_texts",
+            }
+
+            # 🏷️ Inferimos etiquetas
+            tags = infer_tags_from_payload(payload, content)
+            payload.update(tags)
+
+            print(f"🏷️ Etiquetas inferidas: {tags}")  # Opcional
+
             client.upsert(
                 collection_name="voia_vectors",
                 points=[{
                     "id": qdrant_id,
                     "vector": get_embedding(content),
-                    "payload": {
-                        "type": "custom_text",
-                        "user_id": item.get('user_id'),
-                        "bot_id": item.get('bot_id'),
-                        "bot_template_id": item.get('bot_template_id'),
-                        "source": "training_custom_texts",
-                    }
+                    "payload": payload
                 }]
             )
 
