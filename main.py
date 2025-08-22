@@ -1,26 +1,24 @@
-from fastapi import FastAPI
+# voia_vector_services/main.py
+from fastapi import FastAPI, Query
 from process_documents import process_pending_documents
 from process_urls import process_pending_urls
 from process_custom_texts import process_pending_custom_texts
+from .search_vectors import search_vectors
 
-# This is the FastAPI application instance.
+# Instancia FastAPI
 app = FastAPI()
 
-# Define an endpoint that listens for a GET request.
+# Endpoints existentes
 @app.get("/process_all")
 def process_all():
     print("🚀 Procesando PDFs...")
     process_pending_documents()
-
     print("🌐 Procesando URLs...")
     process_pending_urls()
-
     print("📝 Procesando textos planos...")
     process_pending_custom_texts()
-
     return {"status": "success", "message": "All processing tasks have been initiated."}
 
-# You can also create separate endpoints for each task.
 @app.get("/process_documents")
 def process_documents_endpoint():
     print("🚀 Procesando PDFs...")
@@ -38,3 +36,16 @@ def process_texts_endpoint():
     print("📝 Procesando textos planos...")
     process_pending_custom_texts()
     return {"status": "success", "message": "Custom text processing initiated."}
+
+# 🔹 Nuevo endpoint para búsqueda de vectores
+@app.get("/search_vectors")
+def search_vectors_endpoint(
+    bot_id: int = Query(..., description="ID del bot"),
+    query: str = Query("", description="Texto de búsqueda opcional"),
+    limit: int = Query(5, description="Cantidad máxima de resultados")
+):
+    """
+    Busca vectores en Qdrant asociados a un bot dado y un query opcional.
+    """
+    results = search_vectors(bot_id=bot_id, query=query, limit=limit)
+    return results
