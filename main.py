@@ -1,10 +1,10 @@
 # voia_vector_services/main.py
-from fastapi import FastAPI, Query
-from process_documents import process_pending_documents
-from process_urls import process_pending_urls
-from process_custom_texts import process_pending_custom_texts
-from .search_vectors import search_vectors
+from voia_vector_services.search_vectors import search_vectors
+from voia_vector_services.process_documents import process_pending_documents
+from voia_vector_services.process_urls import process_pending_urls
+from voia_vector_services.process_custom_texts import process_pending_custom_texts
 
+from fastapi import FastAPI, Query   # 👈 Aquí agregamos Query
 # Instancia FastAPI
 app = FastAPI()
 

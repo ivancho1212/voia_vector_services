@@ -1,12 +1,8 @@
-# api.py
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
-from process_documents import process_pending_documents
-from process_urls import process_pending_urls
-from process_custom_texts import process_pending_custom_texts
-
+from voia_vector_services.process_documents import process_pending_documents
+from voia_vector_services.process_urls import process_pending_urls
+from voia_vector_services.process_custom_texts import process_pending_custom_texts
 
 app = FastAPI(
     title="Voia Vector Services",

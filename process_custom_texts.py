@@ -1,9 +1,9 @@
 import uuid
 import hashlib
-from db import get_connection
-from vector_store import get_or_create_vector_store
-from embedder import get_embedding
-from tag_utils import infer_tags_from_payload  # ✅ Importamos etiquetas
+from voia_vector_services.db import get_connection
+from voia_vector_services.vector_store import get_or_create_vector_store
+from voia_vector_services.embedder import get_embedding
+from voia_vector_services.tag_utils import infer_tags_from_payload
 
 client = get_or_create_vector_store()
 

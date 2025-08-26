@@ -1,5 +1,4 @@
-from services.scraper_service import scrape_website
-
+from voia_vector_services.services.scraper_service import scrape_website
 
 def process_url(url: str) -> dict:
     url = url.lower()

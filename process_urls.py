@@ -1,10 +1,10 @@
 import uuid
 import hashlib
-from db import get_connection
-from vector_store import get_or_create_vector_store
-from embedder import get_embedding
-from services.document_processor import process_url
-from tag_utils import infer_tags_from_payload  # ✅ Importación necesaria
+from voia_vector_services.db import get_connection
+from voia_vector_services.vector_store import get_or_create_vector_store
+from voia_vector_services.embedder import get_embedding
+from voia_vector_services.services.document_processor import process_url
+from voia_vector_services.tag_utils import infer_tags_from_payload
 
 def process_pending_urls():
     print("🚀 Iniciando procesamiento de URLs pendientes...")

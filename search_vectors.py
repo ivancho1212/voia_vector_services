@@ -1,5 +1,5 @@
-from voia_vector_services.vector_store import client
-from voia_vector_services.embedder import get_embedding
+from .embedder import get_embedding
+from .vector_store import client
 
 def search_vectors(bot_id: int, query: str = "", limit: int = 5):
     """

@@ -1,6 +1,6 @@
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct, PointIdsList
-from tag_utils import infer_tags_from_payload  # ✅ IMPORTACIÓN AQUÍ
+from voia_vector_services.tag_utils import infer_tags_from_payload  # ✅
 
 COLLECTION_NAME = "voia_vectors"
 
