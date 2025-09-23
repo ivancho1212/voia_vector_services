@@ -6,26 +6,22 @@ from voia_vector_services.embedder import get_embedding
 from voia_vector_services.services.document_processor import process_url
 from voia_vector_services.tag_utils import infer_tags_from_payload
 
-def process_pending_urls():
-    print("🚀 Iniciando procesamiento de URLs pendientes...")
+def process_pending_urls(bot_id: int):
+    print(f"🚀 Iniciando procesamiento de URLs pendientes para el bot {bot_id}...")
 
-    try:
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-    except Exception as e:
-        print(f"❌ Error conectando a la base de datos: {e}")
-        return
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
 
     try:
         cursor.execute("""
             SELECT id, url, bot_id, bot_template_id, user_id 
             FROM training_urls 
-            WHERE indexed = 0 AND status = 'pending'
-        """)
+            WHERE indexed = 0 AND status = 'pending' AND bot_id = %s
+        """, (bot_id,))
         urls = cursor.fetchall()
 
         if not urls:
-            print("ℹ️ No hay URLs pendientes por procesar.")
+            print(f"ℹ️ No hay URLs pendientes por procesar para el bot {bot_id}.")
             return
 
         client = get_or_create_vector_store()
@@ -34,15 +30,11 @@ def process_pending_urls():
             url_id = url_item['id']
             url = url_item.get('url', '').strip()
 
-            print(f"\n🌐 Procesando URL ID {url_id}: {url}")
+            print(f"\n🌐 Procesando URL ID {url_id}: {url} para el bot {bot_id}")
 
             if not url:
                 print("⚠️ URL vacía o nula. Marcando como error.")
-                cursor.execute("""
-                    UPDATE training_urls 
-                    SET indexed = -1, status = 'error' 
-                    WHERE id = %s
-                """, (url_id,))
+                cursor.execute("UPDATE training_urls SET indexed = -1, status = 'error' WHERE id = %s", (url_id,))
                 conn.commit()
                 continue
 
@@ -52,11 +44,7 @@ def process_pending_urls():
 
                 if not content:
                     print("⚠️ No se extrajo contenido de la URL.")
-                    cursor.execute("""
-                        UPDATE training_urls 
-                        SET indexed = -1, status = 'error' 
-                        WHERE id = %s
-                    """, (url_id,))
+                    cursor.execute("UPDATE training_urls SET indexed = -1, status = 'error' WHERE id = %s", (url_id,))
                     conn.commit()
                     continue
 
@@ -66,21 +54,16 @@ def process_pending_urls():
 
                 cursor.execute("""
                     SELECT COUNT(*) as count FROM training_urls
-                    WHERE content_hash = %s AND indexed = 1
-                """, (content_hash,))
+                    WHERE content_hash = %s AND indexed = 1 AND bot_id = %s
+                """, (content_hash, bot_id))
                 if cursor.fetchone()['count'] > 0:
-                    print("⏩ URL con contenido idéntico ya fue indexada. Se omite.")
-                    cursor.execute("""
-                        UPDATE training_urls 
-                        SET indexed = 1, status = 'completed' 
-                        WHERE id = %s
-                    """, (url_id,))
+                    print("⏩ URL con contenido idéntico ya fue indexada para este bot. Se omite.")
+                    cursor.execute("UPDATE training_urls SET indexed = 2, status = 'completed' WHERE id = %s", (url_id,))
                     conn.commit()
                     continue
 
                 qdrant_id = str(uuid.uuid4())
 
-                # 🎯 Construir payload base
                 payload = {
                     "url": url,
                     "type": result["type"],
@@ -89,11 +72,10 @@ def process_pending_urls():
                     "bot_template_id": url_item.get('bot_template_id'),
                 }
 
-                # 🏷️ Aplicar etiquetas
                 tags = infer_tags_from_payload(payload, content)
                 payload.update(tags)
 
-                print(f"🏷️ Etiquetas inferidas: {tags}")  # Opcional para debug
+                print(f"🏷️ Etiquetas inferidas: {tags}")
 
                 client.upsert(
                     collection_name="voia_vectors",
@@ -115,16 +97,13 @@ def process_pending_urls():
 
             except Exception as e:
                 print(f"❌ Error procesando la URL {url}: {e}")
-                cursor.execute("""
-                    UPDATE training_urls 
-                    SET indexed = -1, status = 'error' 
-                    WHERE id = %s
-                """, (url_id,))
+                cursor.execute("UPDATE training_urls SET indexed = -1, status = 'error' WHERE id = %s", (url_id,))
                 conn.commit()
+                # Propagar la excepción para que el endpoint de FastAPI la capture
+                raise Exception(f"Fallo al procesar la URL {url} (ID: {url_id}): {e}")
 
-    except Exception as e:
-        print(f"❌ Error general en el procesamiento: {e}")
     finally:
-        cursor.close()
-        conn.close()
-        print("\n🔚 Procesamiento de URLs finalizado.")
+        if 'conn' in locals() and conn.is_connected():
+            cursor.close()
+            conn.close()
+        print(f"\n🔚 Procesamiento de URLs para el bot {bot_id} finalizado.")

@@ -28,22 +28,34 @@ def process_all():
     return {"status": "success", "message": "All processing tasks have been initiated."}
 
 @app.get("/process_documents")
-def process_documents_endpoint():
-    print("🚀 Procesando PDFs...")
-    process_pending_documents()
-    return {"status": "success", "message": "Document processing initiated."}
+def process_documents_endpoint(bot_id: int = Query(..., description="ID del bot para procesar documentos")):
+    try:
+        print(f"🚀 Procesando PDFs para el bot_id: {bot_id}...")
+        process_pending_documents(bot_id)
+        return {"status": "success", "message": f"Document processing initiated for bot {bot_id}."}
+    except Exception as e:
+        print(f"❌ Error en process_documents_endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/process_urls")
-def process_urls_endpoint():
-    print("🌐 Procesando URLs...")
-    process_pending_urls()
-    return {"status": "success", "message": "URL processing initiated."}
+def process_urls_endpoint(bot_id: int = Query(..., description="ID del bot para procesar URLs")):
+    try:
+        print(f"🌐 Procesando URLs para el bot_id: {bot_id}...")
+        process_pending_urls(bot_id)
+        return {"status": "success", "message": f"URL processing initiated for bot {bot_id}."}
+    except Exception as e:
+        print(f"❌ Error en process_urls_endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/process_texts")
-def process_texts_endpoint():
-    print("📝 Procesando textos planos...")
-    process_pending_custom_texts()
-    return {"status": "success", "message": "Custom text processing initiated."}
+def process_texts_endpoint(bot_id: int = Query(..., description="ID del bot para procesar textos")):
+    try:
+        print(f"📝 Procesando textos para el bot_id: {bot_id}...")
+        process_pending_custom_texts(bot_id)
+        return {"status": "success", "message": f"Custom text processing initiated for bot {bot_id}."}
+    except Exception as e:
+        print(f"❌ Error en process_texts_endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 🔹 Endpoint para búsqueda de vectores (NUEVO, para el chat dinámico)
 @app.post("/search")

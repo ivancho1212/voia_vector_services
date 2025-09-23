@@ -2,11 +2,12 @@ import os
 import uuid
 import hashlib
 from PyPDF2 import PdfReader
+from pdf2image import convert_from_path
+import pytesseract
 from voia_vector_services.db import get_connection
 from voia_vector_services.vector_store import get_or_create_vector_store
 from voia_vector_services.embedder import get_embedding
 from voia_vector_services.tag_utils import infer_tags_from_payload
-
 
 client = get_or_create_vector_store()
 
@@ -25,13 +26,21 @@ def extract_text_from_pdf(path):
                 raise Exception("Archivo PDF sigue cifrado, no se puede leer.")
 
         text = "\n".join(page.extract_text() or '' for page in reader.pages)
-
         return text.strip()
-
     except Exception as e:
         print(f"❌ Error leyendo PDF {path}: {e}")
         raise
 
+def extract_text_from_pdf_with_ocr(path):
+    try:
+        pages = convert_from_path(path)
+        text = ""
+        for page in pages:
+            text += pytesseract.image_to_string(page)
+        return text.strip()
+    except Exception as e:
+        print(f"❌ Error OCR PDF {path}: {e}")
+        return ""
 
 def index_document(qdrant_id, text, metadata):
     try:
@@ -49,7 +58,6 @@ def index_document(qdrant_id, text, metadata):
         print(f"❌ Error al indexar en Qdrant: {e}")
         raise
 
-
 def handle_invalid_pdf(path, doc_id, user_id, cursor, conn):
     print(f"🗑️ Eliminando archivo inválido: {path}")
     try:
@@ -63,72 +71,82 @@ def handle_invalid_pdf(path, doc_id, user_id, cursor, conn):
 
     cursor.execute("UPDATE uploaded_documents SET indexed = -1 WHERE id = %s", (doc_id,))
     conn.commit()
-    print(f"📢 (Simulado) Notificar a usuario {user_id} que su archivo es inválido.")
+    print(f"📢 Notificar a usuario {user_id} que su archivo es inválido.")
 
-
-def process_pending_documents():
+def process_pending_documents(bot_id: int):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
 
-    cursor.execute("""
-        SELECT id, file_path, bot_id, bot_template_id, user_id, file_name 
-        FROM uploaded_documents 
-        WHERE indexed = 0
-    """)
-    documents = cursor.fetchall()
+    try:
+        cursor.execute("""
+            SELECT id, file_path, bot_id, bot_template_id, user_id, file_name 
+            FROM uploaded_documents 
+            WHERE indexed = 0 AND bot_id = %s
+        """, (bot_id,))
+        documents = cursor.fetchall()
 
-    for doc in documents:
-        relative_path = doc['file_path'].replace("\\", "/")
-        abs_path = os.path.normpath(os.path.join(os.getenv("UPLOAD_DIR"), os.path.basename(relative_path)))
+        if not documents:
+            print(f"✅ No hay documentos pendientes para el bot {bot_id}.")
+            return
 
-        print(f"📄 Procesando: {abs_path}")
+        for doc in documents:
+            # Corregir escape en rutas
+            relative_path = doc['file_path'].replace("\\", "/")
+            abs_path = os.path.normpath(os.path.join(os.getenv("UPLOAD_DIR", ""), os.path.basename(relative_path)))
 
-        try:
-            content = extract_text_from_pdf(abs_path)
+            print(f"📄 Procesando: {abs_path} para el bot {bot_id}")
 
-            if content.strip():
-                print(f"✅ Texto extraído: {content[:300]} ...")
+            try:
+                content = extract_text_from_pdf(abs_path)
 
-                content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                if not content.strip():
+                    print("⚠️ Texto vacío, intentando OCR...")
+                    content = extract_text_from_pdf_with_ocr(abs_path)
 
-                cursor.execute("""
-                    SELECT COUNT(*) as count FROM uploaded_documents
-                    WHERE content_hash = %s AND indexed = 1
-                """, (content_hash,))
-                if cursor.fetchone()['count'] > 0:
-                    print("⏩ Documento con contenido idéntico ya fue indexado. Se omite.")
-                    continue
+                if content.strip():
+                    print(f"✅ Texto extraído: {content[:300]} ...")
+                    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-                qdrant_id = str(uuid.uuid4())
+                    cursor.execute("""
+                        SELECT COUNT(*) as count FROM uploaded_documents
+                        WHERE content_hash = %s AND indexed = 1 AND bot_id = %s
+                    """, (content_hash, bot_id))
+                    if cursor.fetchone()['count'] > 0:
+                        print("⏩ Documento con contenido idéntico ya fue indexado para este bot. Se omite.")
+                        cursor.execute("UPDATE uploaded_documents SET indexed = 2 WHERE id = %s", (doc['id'],))
+                        conn.commit()
+                        continue
 
-                payload = {
-                    "file_name": doc['file_name'],
-                    "user_id": doc['user_id'],
-                    "bot_id": doc['bot_id'],
-                    "bot_template_id": doc['bot_template_id'],
-                }
+                    qdrant_id = str(uuid.uuid4())
 
-                tags = infer_tags_from_payload(payload, content)
-                payload.update(tags)
+                    payload = {
+                        "file_name": doc['file_name'],
+                        "user_id": doc['user_id'],
+                        "bot_id": doc['bot_id'],
+                        "bot_template_id": doc['bot_template_id'],
+                    }
 
-                index_document(qdrant_id, content, payload)
+                    tags = infer_tags_from_payload(payload, content)
+                    payload.update(tags)
 
+                    index_document(qdrant_id, content, payload)
 
-                cursor.execute("""
-                    UPDATE uploaded_documents 
-                    SET indexed = 1, qdrant_id = %s, content_hash = %s, extracted_text = %s
-                    WHERE id = %s
-                """, (qdrant_id, content_hash, content[:10000], doc['id']))
+                    cursor.execute("""
+                        UPDATE uploaded_documents 
+                        SET indexed = 1, qdrant_id = %s, content_hash = %s, extracted_text = %s
+                        WHERE id = %s
+                    """, (qdrant_id, content_hash, content[:10000], doc['id']))
 
-                conn.commit()
+                    conn.commit()
+                else:
+                    print("❌ No se pudo extraer texto del archivo (vacío o ilegible).")
+                    handle_invalid_pdf(abs_path, doc['id'], doc['user_id'], cursor, conn)
 
-            else:
-                print("⚠️ No se pudo extraer texto del archivo (vacío o ilegible).")
+            except Exception as e:
+                print(f"❌ Error al procesar el archivo: {e}")
                 handle_invalid_pdf(abs_path, doc['id'], doc['user_id'], cursor, conn)
+                raise Exception(f"Fallo al procesar el documento {doc['file_name']} (ID: {doc['id']}): {e}")
 
-        except Exception as e:
-            print(f"❌ Error al procesar el archivo: {e}")
-            handle_invalid_pdf(abs_path, doc['id'], doc['user_id'], cursor, conn)
-
-    cursor.close()
-    conn.close()
+    finally:
+        cursor.close()
+        conn.close()
