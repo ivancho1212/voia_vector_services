@@ -33,8 +33,8 @@ def process_pending_urls(bot_id: int):
             print(f"\n🌐 Procesando URL ID {url_id}: {url} para el bot {bot_id}")
 
             if not url:
-                print("⚠️ URL vacía o nula. Marcando como error.")
-                cursor.execute("UPDATE training_urls SET indexed = -1, status = 'error' WHERE id = %s", (url_id,))
+                print("⚠️ URL vacía o nula. Marcando como fallido.")
+                cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed' WHERE id = %s", (url_id,))
                 conn.commit()
                 continue
 
@@ -44,7 +44,7 @@ def process_pending_urls(bot_id: int):
 
                 if not content:
                     print("⚠️ No se extrajo contenido de la URL.")
-                    cursor.execute("UPDATE training_urls SET indexed = -1, status = 'error' WHERE id = %s", (url_id,))
+                    cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed' WHERE id = %s", (url_id,))
                     conn.commit()
                     continue
 
@@ -58,9 +58,9 @@ def process_pending_urls(bot_id: int):
                 """, (content_hash, bot_id))
                 if cursor.fetchone()['count'] > 0:
                     print("⏩ URL con contenido idéntico ya fue indexada para este bot. Se omite.")
-                    cursor.execute("UPDATE training_urls SET indexed = 2, status = 'completed' WHERE id = %s", (url_id,))
-                    conn.commit()
-                    continue
+                cursor.execute("UPDATE training_urls SET indexed = 2, status = 'processed' WHERE id = %s", (url_id,))
+                conn.commit()
+                continue
 
                 qdrant_id = str(uuid.uuid4())
 
@@ -88,7 +88,7 @@ def process_pending_urls(bot_id: int):
 
                 cursor.execute("""
                     UPDATE training_urls 
-                    SET indexed = 1, status = 'completed', qdrant_id = %s, content_hash = %s, extracted_text = %s 
+                    SET indexed = 1, status = 'processed', qdrant_id = %s, content_hash = %s, extracted_text = %s 
                     WHERE id = %s
                 """, (qdrant_id, content_hash, content[:10000], url_id))
 
@@ -97,9 +97,25 @@ def process_pending_urls(bot_id: int):
 
             except Exception as e:
                 print(f"❌ Error procesando la URL {url}: {e}")
-                cursor.execute("UPDATE training_urls SET indexed = -1, status = 'error' WHERE id = %s", (url_id,))
+                
+                # Determinar si es un error HTTP 404
+                error_msg = str(e)
+                if "404" in error_msg:
+                    print(f"⚠️ La URL no existe o no es accesible: {url}")
+                    cursor.execute("""
+                        UPDATE training_urls 
+                        SET indexed = -1, 
+                            status = 'failed',
+                            extracted_text = 'URL no encontrada o no accesible (404)'
+                        WHERE id = %s
+                    """, (url_id,))
+                    conn.commit()
+                    # Para errores 404, no propagamos la excepción
+                    continue
+                
+                # Para otros errores, marcamos como fallido y propagamos la excepción
+                cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed' WHERE id = %s", (url_id,))
                 conn.commit()
-                # Propagar la excepción para que el endpoint de FastAPI la capture
                 raise Exception(f"Fallo al procesar la URL {url} (ID: {url_id}): {e}")
 
     finally:

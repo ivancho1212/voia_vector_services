@@ -1,5 +1,10 @@
 # voia_vector_services/main.py
 from fastapi import FastAPI, Query, HTTPException  # 👈 Agregar HTTPException
+from dotenv import load_dotenv
+import os
+
+# Cargar variables de entorno
+load_dotenv()
 from voia_vector_services.process_documents import process_pending_documents # noqa
 from voia_vector_services.process_urls import process_pending_urls # noqa
 from voia_vector_services.process_custom_texts import process_pending_custom_texts # noqa

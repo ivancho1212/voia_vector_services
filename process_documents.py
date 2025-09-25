@@ -91,10 +91,17 @@ def process_pending_documents(bot_id: int):
 
         for doc in documents:
             # Corregir escape en rutas
-            relative_path = doc['file_path'].replace("\\", "/")
-            abs_path = os.path.normpath(os.path.join(os.getenv("UPLOAD_DIR", ""), os.path.basename(relative_path)))
+            # Usar la ruta base configurada o inferirla
+            net_root = os.getenv('DOTNET_ROOT_PATH', 'C:/Users/Ivan Herrera/Documents/VIA/Api')
+            relative_path = doc['file_path'].replace('\\', '/')
+            abs_path = os.path.normpath(os.path.join(net_root, relative_path))
 
             print(f"📄 Procesando: {abs_path} para el bot {bot_id}")
+            print(f"🔍 Detalles de la ruta:")
+            print(f"  - NET_ROOT: {net_root}")
+            print(f"  - Ruta relativa: {relative_path}")
+            print(f"  - Ruta absoluta: {abs_path}")
+            print(f"  - ¿Archivo existe?: {os.path.exists(abs_path)}")
 
             try:
                 content = extract_text_from_pdf(abs_path)
