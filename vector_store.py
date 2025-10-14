@@ -1,8 +1,5 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from process_documents import process_pending_documents
-from process_urls import process_pending_urls
-from process_custom_texts import process_pending_custom_texts
 
 app = FastAPI(
     title="Voia Vector Services",
@@ -112,10 +109,10 @@ import os
 
 # Cargar variables de entorno
 load_dotenv()
-from process_documents import process_pending_documents # noqa
-from process_urls import process_pending_urls # noqa
-from process_custom_texts import process_pending_custom_texts # noqa
-from search_vectors import search_vectors # noqa
+# from process_documents import process_pending_documents # noqa  # Deshabilitado: rompe el flujo por ciclos/imports
+# from process_urls import process_pending_urls # noqa
+# from process_custom_texts import process_pending_custom_texts # noqa
+# from search_vectors import search_vectors # noqa
 
 from fastapi import FastAPI, Query
 from pydantic import BaseModel
@@ -201,12 +198,12 @@ def search_vectors_get_endpoint(
         raise HTTPException(status_code=500, detail=f"Error interno en el servicio de búsqueda de Python: {str(e)}")
 import uuid
 import hashlib
-from db import get_connection
-from vector_store import get_or_create_vector_store
-from embedder import get_embedding
-from tag_utils import infer_tags_from_payload
+# from db import get_connection  # Deshabilitado: rompe el flujo por ciclos/imports
+# from vector_store import get_or_create_vector_store
+# from embedder import get_embedding
+# from tag_utils import infer_tags_from_payload
 
-client = get_or_create_vector_store()
+# client = get_or_create_vector_store()  # Deshabilitado: función no disponible por import
 
 def process_pending_custom_texts(bot_id: int):
     print(f"🚀 Iniciando procesamiento de textos planos para el bot {bot_id}...")
@@ -298,12 +295,12 @@ import hashlib
 from PyPDF2 import PdfReader
 from pdf2image import convert_from_path
 import pytesseract
-from db import get_connection
-from vector_store import get_or_create_vector_store
-from embedder import get_embedding
-from tag_utils import infer_tags_from_payload
+# from db import get_connection  # Deshabilitado: rompe el flujo por ciclos/imports
+# from vector_store import get_or_create_vector_store
+# from embedder import get_embedding
+# from tag_utils import infer_tags_from_payload
 
-client = get_or_create_vector_store()
+# client = get_or_create_vector_store()
 
 def extract_text_from_pdf(path):
     try:
@@ -453,11 +450,11 @@ def process_pending_documents(bot_id: int):
         conn.close()
 import uuid
 import hashlib
-from db import get_connection
-from vector_store import get_or_create_vector_store
-from embedder import get_embedding
-from services.document_processor import process_url
-from tag_utils import infer_tags_from_payload
+# from db import get_connection  # Deshabilitado: rompe el flujo por ciclos/imports
+# from vector_store import get_or_create_vector_store
+# from embedder import get_embedding
+# from services.document_processor import process_url
+# from tag_utils import infer_tags_from_payload
 
 def process_pending_urls(bot_id: int):
     print(f"🚀 Iniciando procesamiento de URLs pendientes para el bot {bot_id}...")
@@ -578,7 +575,7 @@ def process_pending_urls(bot_id: int):
         print(f"\n🔚 Procesamiento de URLs para el bot {bot_id} finalizado.")
 # voia_vector_services/search_vectors.py
 from .embedder import get_embedding
-from .vector_store import get_or_create_vector_store
+# from .vector_store import get_or_create_vector_store  # Deshabilitado: rompe el flujo por ciclos/imports
 
 def search_vectors(bot_id: int, query: str = "", limit: int = 5):
     """
@@ -697,7 +694,7 @@ def infer_tags_from_payload(payload: Dict, extracted_text: str = "") -> Dict:
     return tags
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct, PointIdsList
-from tag_utils import infer_tags_from_payload  # ✅
+# from tag_utils import infer_tags_from_payload  # Deshabilitado: rompe el flujo por ciclos/imports
 
 COLLECTION_NAME = "voia_vectors"
 

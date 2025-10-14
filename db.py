@@ -1,8 +1,5 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from process_documents import process_pending_documents
-from process_urls import process_pending_urls
-from process_custom_texts import process_pending_custom_texts
 
 app = FastAPI(
     title="Voia Vector Services",
@@ -201,7 +198,7 @@ def search_vectors_get_endpoint(
         raise HTTPException(status_code=500, detail=f"Error interno en el servicio de búsqueda de Python: {str(e)}")
 import uuid
 import hashlib
-from db import get_connection
+from .db import get_connection
 from vector_store import get_or_create_vector_store
 from embedder import get_embedding
 from tag_utils import infer_tags_from_payload
@@ -298,7 +295,7 @@ import hashlib
 from PyPDF2 import PdfReader
 from pdf2image import convert_from_path
 import pytesseract
-from db import get_connection
+from .db import get_connection
 from vector_store import get_or_create_vector_store
 from embedder import get_embedding
 from tag_utils import infer_tags_from_payload
@@ -453,7 +450,7 @@ def process_pending_documents(bot_id: int):
         conn.close()
 import uuid
 import hashlib
-from db import get_connection
+from .db import get_connection
 from vector_store import get_or_create_vector_store
 from embedder import get_embedding
 from services.document_processor import process_url

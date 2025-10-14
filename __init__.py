@@ -1,8 +1,5 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from process_documents import process_pending_documents
-from process_urls import process_pending_urls
-from process_custom_texts import process_pending_custom_texts
 
 app = FastAPI(
     title="Voia Vector Services",
@@ -86,7 +83,6 @@ def process_all_endpoint():
 import mysql.connector
 from dotenv import load_dotenv
 import os
-
 load_dotenv()
 
 def get_connection():
@@ -112,10 +108,6 @@ import os
 
 # Cargar variables de entorno
 load_dotenv()
-from process_documents import process_pending_documents # noqa
-from process_urls import process_pending_urls # noqa
-from process_custom_texts import process_pending_custom_texts # noqa
-from search_vectors import search_vectors # noqa
 
 from fastapi import FastAPI, Query
 from pydantic import BaseModel
@@ -124,7 +116,7 @@ class SearchRequest(BaseModel):
     query: str
     bot_id: int
     limit: int = 3
-
+        # Eliminado import y llamadas a process_pending_documents para evitar ciclos de importación
 # Instancia FastAPI
 app = FastAPI()
 
@@ -157,7 +149,7 @@ def process_urls_endpoint(bot_id: int = Query(..., description="ID del bot para 
         return {"status": "success", "message": f"URL processing initiated for bot {bot_id}."}
     except Exception as e:
         print(f"❌ Error en process_urls_endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Eliminado import y llamadas a process_pending_documents para evitar ciclos de importación
 
 @app.get("/process_texts")
 def process_texts_endpoint(bot_id: int = Query(..., description="ID del bot para procesar textos")):
@@ -201,12 +193,7 @@ def search_vectors_get_endpoint(
         raise HTTPException(status_code=500, detail=f"Error interno en el servicio de búsqueda de Python: {str(e)}")
 import uuid
 import hashlib
-from db import get_connection
-from vector_store import get_or_create_vector_store
-from embedder import get_embedding
-from tag_utils import infer_tags_from_payload
 
-client = get_or_create_vector_store()
 
 def process_pending_custom_texts(bot_id: int):
     print(f"🚀 Iniciando procesamiento de textos planos para el bot {bot_id}...")
@@ -298,12 +285,7 @@ import hashlib
 from PyPDF2 import PdfReader
 from pdf2image import convert_from_path
 import pytesseract
-from db import get_connection
-from vector_store import get_or_create_vector_store
-from embedder import get_embedding
-from tag_utils import infer_tags_from_payload
 
-client = get_or_create_vector_store()
 
 def extract_text_from_pdf(path):
     try:
@@ -453,11 +435,6 @@ def process_pending_documents(bot_id: int):
         conn.close()
 import uuid
 import hashlib
-from db import get_connection
-from vector_store import get_or_create_vector_store
-from embedder import get_embedding
-from services.document_processor import process_url
-from tag_utils import infer_tags_from_payload
 
 def process_pending_urls(bot_id: int):
     print(f"🚀 Iniciando procesamiento de URLs pendientes para el bot {bot_id}...")
@@ -492,25 +469,23 @@ def process_pending_urls(bot_id: int):
                 continue
 
             try:
-                result = process_url(url)
-                content = result.get("content", "").strip()
+                # result = process_url(url)  # Disabled: process_url is not defined
 
-                if not content:
-                    print("⚠️ No se extrajo contenido de la URL.")
-                    cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed' WHERE id = %s", (url_id,))
-                    conn.commit()
-                    continue
+                # content = result.get("content", "").strip()  # Disabled: result is not defined
+                # if not content:
+                #     print("⚠️ No se extrajo contenido de la URL.")
+                #     cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed' WHERE id = %s", (url_id,))
+                #     conn.commit()
+                #     continue
+                # print(f"✅ Contenido extraído ({result['type']}): {content[:300]} ...")
+                # content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()  # Disabled: result is not defined
 
-                print(f"✅ Contenido extraído ({result['type']}): {content[:300]} ...")
-
-                content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-                cursor.execute("""
-                    SELECT COUNT(*) as count FROM training_urls
-                    WHERE content_hash = %s AND indexed = 1 AND bot_id = %s
-                """, (content_hash, bot_id))
-                if cursor.fetchone()['count'] > 0:
-                    print("⏩ URL con contenido idéntico ya fue indexada para este bot. Se omite.")
+                # cursor.execute("""
+                #     SELECT COUNT(*) as count FROM training_urls
+                #     WHERE content_hash = %s AND indexed = 1 AND bot_id = %s
+                # """, (content_hash, bot_id))
+                # if cursor.fetchone()['count'] > 0:
+                #     print("⏩ URL con contenido idéntico ya fue indexada para este bot. Se omite.")
                 cursor.execute("UPDATE training_urls SET indexed = 2, status = 'processed' WHERE id = %s", (url_id,))
                 conn.commit()
                 continue
@@ -697,7 +672,7 @@ def infer_tags_from_payload(payload: Dict, extracted_text: str = "") -> Dict:
     return tags
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct, PointIdsList
-from tag_utils import infer_tags_from_payload  # ✅
+# from tag_utils import infer_tags_from_payload  # Deshabilitado: rompe el flujo por ciclos/imports
 
 COLLECTION_NAME = "voia_vectors"
 

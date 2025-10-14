@@ -4,10 +4,9 @@ import hashlib
 from PyPDF2 import PdfReader
 from pdf2image import convert_from_path
 import pytesseract
-from voia_vector_services.db import get_connection
-from voia_vector_services.vector_store import get_or_create_vector_store
-from voia_vector_services.embedder import get_embedding
-from voia_vector_services.tag_utils import infer_tags_from_payload
+from .db_utils import get_connection, get_embedding
+from .vector_store import get_or_create_vector_store
+
 
 client = get_or_create_vector_store()
 
@@ -133,6 +132,7 @@ def process_pending_documents(bot_id: int):
                         "bot_template_id": doc['bot_template_id'],
                     }
 
+                    from .tag_inference import infer_tags_from_payload
                     tags = infer_tags_from_payload(payload, content)
                     payload.update(tags)
 
