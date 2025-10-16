@@ -454,7 +454,7 @@ import hashlib
 # from db import get_connection
 # from vector_store import get_or_create_vector_store
 # from embedder import get_embedding
-# from services.document_processor import process_url
+from .services.document_processor import process_url
 # from tag_utils import infer_tags_from_payload
 
 def process_pending_urls(bot_id: int):
@@ -462,6 +462,7 @@ def process_pending_urls(bot_id: int):
 
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
+
 
     try:
         cursor.execute("""
@@ -485,7 +486,7 @@ def process_pending_urls(bot_id: int):
 
             if not url:
                 print("⚠️ URL vacía o nula. Marcando como fallido.")
-                cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed' WHERE id = %s", (url_id,))
+                cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed', extracted_text = 'URL vacía o nula.' WHERE id = %s", (url_id,))
                 conn.commit()
                 continue
 
@@ -494,8 +495,8 @@ def process_pending_urls(bot_id: int):
                 content = result.get("content", "").strip()
 
                 if not content:
-                    print("⚠️ No se extrajo contenido de la URL.")
-                    cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed' WHERE id = %s", (url_id,))
+                    print(f"⚠️ No se extrajo contenido de la URL. Guardando mensaje en extracted_text.")
+                    cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed', extracted_text = %s WHERE id = %s", ("No se extrajo contenido de la URL.", url_id))
                     conn.commit()
                     continue
 
@@ -509,9 +510,9 @@ def process_pending_urls(bot_id: int):
                 """, (content_hash, bot_id))
                 if cursor.fetchone()['count'] > 0:
                     print("⏩ URL con contenido idéntico ya fue indexada para este bot. Se omite.")
-                cursor.execute("UPDATE training_urls SET indexed = 2, status = 'processed' WHERE id = %s", (url_id,))
-                conn.commit()
-                continue
+                    cursor.execute("UPDATE training_urls SET indexed = 2, status = 'processed', extracted_text = %s WHERE id = %s", ("Contenido duplicado omitido.", url_id))
+                    conn.commit()
+                    continue
 
                 qdrant_id = str(uuid.uuid4())
 
@@ -548,8 +549,6 @@ def process_pending_urls(bot_id: int):
 
             except Exception as e:
                 print(f"❌ Error procesando la URL {url}: {e}")
-                
-                # Determinar si es un error HTTP 404
                 error_msg = str(e)
                 if "404" in error_msg:
                     print(f"⚠️ La URL no existe o no es accesible: {url}")
@@ -561,13 +560,12 @@ def process_pending_urls(bot_id: int):
                         WHERE id = %s
                     """, (url_id,))
                     conn.commit()
-                    # Para errores 404, no propagamos la excepción
                     continue
-                
-                # Para otros errores, marcamos como fallido y propagamos la excepción
-                cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed' WHERE id = %s", (url_id,))
+                # Para otros errores, guardar el mensaje de error en extracted_text
+                cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed', extracted_text = %s WHERE id = %s", (f"Error: {error_msg}", url_id))
                 conn.commit()
-                raise Exception(f"Fallo al procesar la URL {url} (ID: {url_id}): {e}")
+                # No propagar la excepción para evitar detener el procesamiento de otras URLs
+
 
     finally:
         if 'conn' in locals() and conn.is_connected():
