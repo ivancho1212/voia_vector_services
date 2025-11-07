@@ -198,18 +198,32 @@ def search_vectors_get_endpoint(
         raise HTTPException(status_code=500, detail=f"Error interno en el servicio de búsqueda de Python: {str(e)}")
 import uuid
 import hashlib
+from datetime import datetime
 # from db import get_connection  # Deshabilitado: rompe el flujo por ciclos/imports
 # from vector_store import get_or_create_vector_store
 # from embedder import get_embedding
+from .text_chunking import split_into_chunks
 # from tag_utils import infer_tags_from_payload
 
 # client = get_or_create_vector_store()
 
 def process_pending_custom_texts(bot_id: int):
+    """
+    ✅ SOLUTION #3 + #4: Procesamiento de textos con error handling robusto y metadata completo.
+    
+    Características:
+    - Try-catch INDIVIDUAL por texto
+    - Actualiza indexed = -1 en error
+    - Continúa batch incluso si un texto falla
+    - Metadata COMPLETO en cada chunk
+    """
     print(f"🚀 Iniciando procesamiento de textos planos para el bot {bot_id}...")
 
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
+    
+    processed_count = 0
+    failed_count = 0
 
     try:
         cursor.execute("""
@@ -223,72 +237,115 @@ def process_pending_custom_texts(bot_id: int):
             print(f"ℹ️ No hay textos planos pendientes por procesar para el bot {bot_id}.")
             return
 
+        client = get_or_create_vector_store()
+
         for item in texts:
+            # ✅ SOLUTION #3: TRY-CATCH INDIVIDUAL POR TEXTO
             try:
                 content = item['content'].strip()
 
                 if not content:
-                    print(f"⚠️ Texto vacío. ID {item['id']}")
-                    cursor.execute("UPDATE training_custom_texts SET indexed = -1 WHERE id = %s", (item['id'],))
-                    conn.commit()
-                    continue
+                    raise Exception("Texto vacío")
 
                 content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+                # Verificar duplicados
                 cursor.execute("""
                     SELECT COUNT(*) as count FROM training_custom_texts
                     WHERE content_hash = %s AND indexed = 1 AND bot_id = %s
                 """, (content_hash, bot_id))
                 if cursor.fetchone()['count'] > 0:
-                    print(f"⏩ Texto con contenido idéntico ya fue indexado para este bot. Se omite. ID {item['id']}")
+                    print(f"⏩ Contenido duplicado, marcando como procesado (indexed=2)")
                     cursor.execute("UPDATE training_custom_texts SET indexed = 2 WHERE id = %s", (item['id'],))
                     conn.commit()
                     continue
 
-                qdrant_id = str(uuid.uuid4())
+                # ✅ SOLUTION #4: METADATA COMPLETO - Chunking inteligente
+                chunks = split_into_chunks(content, chunk_size=512, overlap=50, sentence_aware=True)
+                print(f"   📦 Dividido en {len(chunks)} chunks")
 
-                payload = {
-                    "type": "custom_text",
-                    "user_id": item.get('user_id'),
-                    "bot_id": item.get('bot_id'),
-                    "bot_template_id": item.get('bot_template_id'),
-                    "source": "training_custom_texts",
-                }
+                indexed_chunk_ids = []
+                for chunk_idx, chunk in enumerate(chunks, 1):
+                    chunk_qdrant_id = str(uuid.uuid4())
+                    
+                    # ✅ Payload con METADATA COMPLETO
+                    payload = {
+                        # Identificadores
+                        "doc_id": item['id'],
+                        "bot_id": item.get('bot_id'),
+                        "user_id": item.get('user_id'),
+                        "bot_template_id": item.get('bot_template_id'),
+                        
+                        # Fuente y tipo
+                        "source": "custom_text",
+                        "source_type": "text",
+                        
+                        # Contenido
+                        "original_text": chunk[:500],
+                        "text_length": len(chunk),
+                        "chunk_number": chunk_idx,
+                        "total_chunks": len(chunks),
+                        
+                        # Metadata temporal
+                        "processed_at": datetime.now().isoformat(),
+                        "content_hash": content_hash,
+                        "indexed_status": "indexed",
+                        "error_message": None,
+                        "type": "custom_text",
+                    }
+                    
+                    # Agregar tags inferidos
+                    tags = infer_tags_from_payload(payload, chunk)
+                    payload.update(tags)
 
-                tags = infer_tags_from_payload(payload, content)
-                payload.update(tags)
+                    # Indexar chunk
+                    client.upsert(
+                        collection_name="voia_vectors",
+                        points=[{
+                            "id": chunk_qdrant_id,
+                            "vector": get_embedding(chunk),
+                            "payload": payload
+                        }]
+                    )
+                    indexed_chunk_ids.append(chunk_qdrant_id)
 
-                print(f"🏷️ Etiquetas inferidas: {tags}")
-
-                client.upsert(
-                    collection_name="voia_vectors",
-                    points=[{
-                        "id": qdrant_id,
-                        "vector": get_embedding(content),
-                        "payload": payload
-                    }]
-                )
-
+                # Actualizar texto como indexado
                 cursor.execute("""
                     UPDATE training_custom_texts
                     SET indexed = 1, qdrant_id = %s, content_hash = %s
                     WHERE id = %s
-                """, (qdrant_id, content_hash, item['id']))
-
+                """, (indexed_chunk_ids[0], content_hash, item['id']))
                 conn.commit()
-                print(f"✅ Texto plano ID {item['id']} procesado y vectorizado.")
+                
+                print(f"   ✅ {len(chunks)} chunks indexados")
+                processed_count += 1
 
             except Exception as e:
-                print(f"❌ Error procesando texto ID {item['id']}: {e}")
-                cursor.execute("UPDATE training_custom_texts SET indexed = -1 WHERE id = %s", (item['id'],))
-                conn.commit()
-                raise Exception(f"Fallo al procesar el texto (ID: {item['id']}): {e}")
+                # ✅ SOLUTION #3: ERROR HANDLING - Marcar texto como fallido (indexed = -1)
+                error_msg = str(e)[:500]
+                print(f"❌ Error en texto {item['id']}: {error_msg}")
+                failed_count += 1
+                
+                try:
+                    cursor.execute("""
+                        UPDATE training_custom_texts 
+                        SET indexed = -1, error_message = %s
+                        WHERE id = %s
+                    """, (error_msg, item['id']))
+                    conn.commit()
+                    print(f"   📌 Marcado como FALLIDO (indexed=-1), continuando batch...")
+                except Exception as db_error:
+                    print(f"   ⚠️ Error actualizando DB: {db_error}")
+                    conn.rollback()
+                
+                # ✅ CONTINUAR CON SIGUIENTE TEXTO (NO FALLAR BATCH)
+                continue
 
     finally:
         if 'conn' in locals() and conn.is_connected():
             cursor.close()
             conn.close()
-        print(f"\n🔚 Procesamiento de textos planos para el bot {bot_id} finalizado.")
+        print(f"\n🔚 Procesamiento completado: {processed_count} exitosos, {failed_count} fallos")
 import os
 import uuid
 import hashlib
@@ -417,15 +474,32 @@ def process_pending_documents(bot_id: int):
 
                     qdrant_id = str(uuid.uuid4())
 
-                    payload = {
-                        "file_name": doc['file_name'],
-                        "user_id": doc['user_id'],
+                    # ✅ METADATA COMPLETO para mejor trazabilidad
+                    base_payload = {
+                        # Identificadores
+                        "doc_id": doc['id'],
                         "bot_id": doc['bot_id'],
+                        "user_id": doc['user_id'],
                         "bot_template_id": doc['bot_template_id'],
+                        
+                        # Fuente y tipo
+                        "source": "text",  # "document", "url", "text"
+                        "text_id": doc.get('text_id'),  # ID si aplicable
+                        "file_name": doc['file_name'],
+                        
+                        # Contenido
+                        "original_text": content[:500],  # Primeros 500 chars para preview
+                        "text_length": len(content),
+                        "chunk_number": 1,
+                        
+                        # Metadata
+                        "processed_at": __import__('datetime').datetime.now().isoformat(),
+                        "content_hash": content_hash,
                     }
-
-                    tags = infer_tags_from_payload(payload, content)
-                    payload.update(tags)
+                    
+                    # Agregar tags inferidos
+                    tags = infer_tags_from_payload(base_payload, content)
+                    payload = {**base_payload, **tags}
 
                     index_document(qdrant_id, content, payload)
 
@@ -441,9 +515,21 @@ def process_pending_documents(bot_id: int):
                     handle_invalid_pdf(abs_path, doc['id'], doc['user_id'], cursor, conn)
 
             except Exception as e:
+                # ✅ MANEJO DE ERROR: marcar como fallido (indexed = -1) para evitar ciclo infinito
                 print(f"❌ Error al procesar el archivo: {e}")
-                handle_invalid_pdf(abs_path, doc['id'], doc['user_id'], cursor, conn)
-                raise Exception(f"Fallo al procesar el documento {doc['file_name']} (ID: {doc['id']}): {e}")
+                try:
+                    cursor.execute("""
+                        UPDATE uploaded_documents 
+                        SET indexed = -1, error_message = %s
+                        WHERE id = %s
+                    """, (str(e)[:500], doc['id']))
+                    conn.commit()
+                    print(f"📌 Documento {doc['id']} marcado como FALLIDO (indexed=-1)")
+                except Exception as db_error:
+                    print(f"❌ Error actualizando DB: {db_error}")
+                    conn.rollback()
+                # Continuar con siguiente documento en lugar de fallar
+                continue
 
     finally:
         cursor.close()

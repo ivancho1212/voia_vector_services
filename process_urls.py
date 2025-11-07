@@ -418,15 +418,32 @@ def process_pending_documents(bot_id: int):
 
                     qdrant_id = str(uuid.uuid4())
 
-                    payload = {
-                        "file_name": doc['file_name'],
-                        "user_id": doc['user_id'],
+                    # ✅ METADATA COMPLETO para mejor trazabilidad
+                    base_payload = {
+                        # Identificadores
+                        "doc_id": doc['id'],
                         "bot_id": doc['bot_id'],
+                        "user_id": doc['user_id'],
                         "bot_template_id": doc['bot_template_id'],
+                        
+                        # Fuente y tipo
+                        "source": "url",  # "document", "url", "text"
+                        "url": doc['file_path'],  # URL guardada
+                        "file_name": doc['file_name'],
+                        
+                        # Contenido
+                        "original_text": content[:500],  # Primeros 500 chars para preview
+                        "text_length": len(content),
+                        "chunk_number": 1,
+                        
+                        # Metadata
+                        "processed_at": __import__('datetime').datetime.now().isoformat(),
+                        "content_hash": content_hash,
                     }
-
-                    tags = infer_tags_from_payload(payload, content)
-                    payload.update(tags)
+                    
+                    # Agregar tags inferidos
+                    tags = infer_tags_from_payload(base_payload, content)
+                    payload = {**base_payload, **tags}
 
                     index_document(qdrant_id, content, payload)
 
@@ -442,27 +459,52 @@ def process_pending_documents(bot_id: int):
                     handle_invalid_pdf(abs_path, doc['id'], doc['user_id'], cursor, conn)
 
             except Exception as e:
+                # ✅ MANEJO DE ERROR: marcar como fallido (indexed = -1) para evitar ciclo infinito
                 print(f"❌ Error al procesar el archivo: {e}")
-                handle_invalid_pdf(abs_path, doc['id'], doc['user_id'], cursor, conn)
-                raise Exception(f"Fallo al procesar el documento {doc['file_name']} (ID: {doc['id']}): {e}")
+                try:
+                    cursor.execute("""
+                        UPDATE uploaded_documents 
+                        SET indexed = -1, error_message = %s
+                        WHERE id = %s
+                    """, (str(e)[:500], doc['id']))
+                    conn.commit()
+                    print(f"📌 Documento {doc['id']} marcado como FALLIDO (indexed=-1)")
+                except Exception as db_error:
+                    print(f"❌ Error actualizando DB: {db_error}")
+                    conn.rollback()
+                # Continuar con siguiente documento en lugar de fallar
+                continue
 
     finally:
         cursor.close()
         conn.close()
 import uuid
 import hashlib
+from datetime import datetime
 # from db import get_connection
 # from vector_store import get_or_create_vector_store
 # from embedder import get_embedding
 from .services.document_processor import process_url
+from .text_chunking import split_into_chunks
 # from tag_utils import infer_tags_from_payload
 
 def process_pending_urls(bot_id: int):
+    """
+    ✅ SOLUTION #3 + #4: Procesamiento de URLs con error handling robusto y metadata completo.
+    
+    Características:
+    - Try-catch INDIVIDUAL por URL
+    - Actualiza indexed = -1 en error
+    - Continúa batch incluso si una URL falla
+    - Metadata COMPLETO en cada resultado
+    """
     print(f"🚀 Iniciando procesamiento de URLs pendientes para el bot {bot_id}...")
 
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
-
+    
+    processed_count = 0
+    failed_count = 0
 
     try:
         cursor.execute("""
@@ -482,96 +524,121 @@ def process_pending_urls(bot_id: int):
             url_id = url_item['id']
             url = url_item.get('url', '').strip()
 
-            print(f"\n🌐 Procesando URL ID {url_id}: {url} para el bot {bot_id}")
+            print(f"\n🌐 Procesando URL ID {url_id}: {url}")
 
-            if not url:
-                print("⚠️ URL vacía o nula. Marcando como fallido.")
-                cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed', extracted_text = 'URL vacía o nula.' WHERE id = %s", (url_id,))
-                conn.commit()
-                continue
-
+            # ✅ SOLUTION #3: TRY-CATCH INDIVIDUAL POR URL
             try:
+                if not url:
+                    raise Exception("URL vacía o nula")
+
                 result = process_url(url)
                 content = result.get("content", "").strip()
 
                 if not content:
-                    print(f"⚠️ No se extrajo contenido de la URL. Guardando mensaje en extracted_text.")
-                    cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed', extracted_text = %s WHERE id = %s", ("No se extrajo contenido de la URL.", url_id))
-                    conn.commit()
-                    continue
+                    raise Exception("No se extrajo contenido de la URL")
 
-                print(f"✅ Contenido extraído ({result['type']}): {content[:300]} ...")
+                print(f"✅ Contenido extraído ({result['type']}): {len(content)} caracteres")
 
                 content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+                # Verificar duplicados
                 cursor.execute("""
                     SELECT COUNT(*) as count FROM training_urls
                     WHERE content_hash = %s AND indexed = 1 AND bot_id = %s
                 """, (content_hash, bot_id))
                 if cursor.fetchone()['count'] > 0:
-                    print("⏩ URL con contenido idéntico ya fue indexada para este bot. Se omite.")
-                    cursor.execute("UPDATE training_urls SET indexed = 2, status = 'processed', extracted_text = %s WHERE id = %s", ("Contenido duplicado omitido.", url_id))
+                    print("⏩ Contenido duplicado, marcando como procesado (indexed=2)")
+                    cursor.execute("UPDATE training_urls SET indexed = 2, status = 'processed' WHERE id = %s", (url_id,))
                     conn.commit()
                     continue
 
-                qdrant_id = str(uuid.uuid4())
+                # ✅ SOLUTION #4: METADATA COMPLETO - Chunking inteligente
+                chunks = split_into_chunks(content, chunk_size=512, overlap=50, sentence_aware=True)
+                print(f"   📦 Dividido en {len(chunks)} chunks")
 
-                payload = {
-                    "url": url,
-                    "type": result["type"],
-                    "user_id": url_item.get('user_id'),
-                    "bot_id": url_item.get('bot_id'),
-                    "bot_template_id": url_item.get('bot_template_id'),
-                }
+                indexed_chunk_ids = []
+                for chunk_idx, chunk in enumerate(chunks, 1):
+                    chunk_qdrant_id = str(uuid.uuid4())
+                    
+                    # ✅ Payload con METADATA COMPLETO
+                    payload = {
+                        # Identificadores
+                        "doc_id": url_id,
+                        "bot_id": url_item.get('bot_id'),
+                        "user_id": url_item.get('user_id'),
+                        "bot_template_id": url_item.get('bot_template_id'),
+                        
+                        # Fuente y tipo
+                        "source": "url",
+                        "source_type": result.get("type", "unknown"),
+                        "url": url,
+                        
+                        # Contenido
+                        "original_text": chunk[:500],
+                        "text_length": len(chunk),
+                        "chunk_number": chunk_idx,
+                        "total_chunks": len(chunks),
+                        
+                        # Metadata temporal
+                        "processed_at": datetime.now().isoformat(),
+                        "content_hash": content_hash,
+                        "indexed_status": "indexed",
+                        "error_message": None,
+                    }
+                    
+                    # Agregar tags inferidos
+                    tags = infer_tags_from_payload(payload, chunk)
+                    payload.update(tags)
 
-                tags = infer_tags_from_payload(payload, content)
-                payload.update(tags)
+                    # Indexar chunk
+                    client.upsert(
+                        collection_name="voia_vectors",
+                        points=[{
+                            "id": chunk_qdrant_id,
+                            "vector": get_embedding(chunk),
+                            "payload": payload
+                        }]
+                    )
+                    indexed_chunk_ids.append(chunk_qdrant_id)
 
-                print(f"🏷️ Etiquetas inferidas: {tags}")
-
-                client.upsert(
-                    collection_name="voia_vectors",
-                    points=[{
-                        "id": qdrant_id,
-                        "vector": get_embedding(content),
-                        "payload": payload
-                    }]
-                )
-
+                # Actualizar URL como indexada
                 cursor.execute("""
                     UPDATE training_urls 
-                    SET indexed = 1, status = 'processed', qdrant_id = %s, content_hash = %s, extracted_text = %s 
+                    SET indexed = 1, status = 'processed', qdrant_id = %s, 
+                        content_hash = %s, extracted_text = %s
                     WHERE id = %s
-                """, (qdrant_id, content_hash, content[:10000], url_id))
-
+                """, (indexed_chunk_ids[0], content_hash, content[:10000], url_id))
                 conn.commit()
-                print("✅ URL procesada y almacenada en Qdrant.")
+                
+                print(f"   ✅ {len(chunks)} chunks indexados")
+                processed_count += 1
 
             except Exception as e:
-                print(f"❌ Error procesando la URL {url}: {e}")
-                error_msg = str(e)
-                if "404" in error_msg:
-                    print(f"⚠️ La URL no existe o no es accesible: {url}")
+                # ✅ SOLUTION #3: ERROR HANDLING - Marcar URL como fallida (indexed = -1)
+                error_msg = str(e)[:500]
+                print(f"❌ Error en URL {url_id}: {error_msg}")
+                failed_count += 1
+                
+                try:
                     cursor.execute("""
                         UPDATE training_urls 
-                        SET indexed = -1, 
-                            status = 'failed',
-                            extracted_text = 'URL no encontrada o no accesible (404)'
+                        SET indexed = -1, status = 'failed', error_message = %s
                         WHERE id = %s
-                    """, (url_id,))
+                    """, (error_msg, url_id))
                     conn.commit()
-                    continue
-                # Para otros errores, guardar el mensaje de error en extracted_text
-                cursor.execute("UPDATE training_urls SET indexed = -1, status = 'failed', extracted_text = %s WHERE id = %s", (f"Error: {error_msg}", url_id))
-                conn.commit()
-                # No propagar la excepción para evitar detener el procesamiento de otras URLs
-
+                    print(f"   📌 Marcada como FALLIDA (indexed=-1), continuando batch...")
+                except Exception as db_error:
+                    print(f"   ⚠️ Error actualizando DB: {db_error}")
+                    conn.rollback()
+                
+                # ✅ CONTINUAR CON SIGUIENTE URL (NO FALLAR BATCH)
+                continue
 
     finally:
         if 'conn' in locals() and conn.is_connected():
             cursor.close()
             conn.close()
-        print(f"\n🔚 Procesamiento de URLs para el bot {bot_id} finalizado.")
+        print(f"\n🔚 Procesamiento completado: {processed_count} exitosos, {failed_count} fallos")
 # voia_vector_services/search_vectors.py
 # from .embedder import get_embedding
 # from .vector_store import get_or_create_vector_store

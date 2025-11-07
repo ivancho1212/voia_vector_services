@@ -767,3 +767,66 @@ def list_all_points(limit=10):
         limit=limit
     )
     return points
+
+
+# ============================================
+# ENDPOINTS DE SINCRONIZACIÓN Y VALIDACIÓN
+# ============================================
+
+@app.get("/validate/{bot_id}")
+def validate_bot_endpoint(bot_id: int):
+    """
+    Valida la integridad de un bot.
+    ¿Todos los vectores tienen documento? ¿Todos los docs tienen vector?
+    """
+    try:
+        from .sync_qdrant_mysql import validate_bot_integrity
+        is_valid = validate_bot_integrity(bot_id)
+        return {
+            "bot_id": bot_id,
+            "status": "ok" if is_valid else "inconsistent",
+            "message": "✅ Bot íntegro" if is_valid else "❌ Bot tiene inconsistencias"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/sync/{bot_id}")
+def sync_bot_endpoint(bot_id: int, dry_run: bool = True):
+    """
+    Sincroniza Qdrant y MySQL para un bot.
+    
+    Args:
+        bot_id: ID del bot
+        dry_run: Si true, solo analiza; si false, repara
+    """
+    try:
+        from .sync_qdrant_mysql import sync_qdrant_with_mysql
+        result = sync_qdrant_with_mysql(bot_id, dry_run=dry_run)
+        return {
+            "bot_id": bot_id,
+            "mode": "dry_run" if dry_run else "repair",
+            "orphan_vectors": result["orphan_vectors"],
+            "lost_documents": result["lost_documents"],
+            "status": "ok",
+            "message": f"Análisis: {result['orphan_vectors']} vectores huérfanos, {result['lost_documents']} docs perdidos"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/sync-all/")
+def sync_all_endpoint(dry_run: bool = True):
+    """
+    Sincroniza TODOS los bots.
+    """
+    try:
+        from .sync_qdrant_mysql import cleanup_all_orphans
+        cleanup_all_orphans(dry_run=dry_run)
+        return {
+            "status": "ok",
+            "mode": "dry_run" if dry_run else "repair",
+            "message": "✅ Sincronización completada para todos los bots"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

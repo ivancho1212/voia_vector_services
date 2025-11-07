@@ -580,27 +580,143 @@ def process_pending_urls(bot_id: int):
 from .embedder import get_embedding
 from .vector_store import get_or_create_vector_store
 
+def _deduplicate_similar_chunks(chunks: list, threshold: float = 0.95) -> list:
+    """
+    ✅ SOLUTION #FIX B: Deduplicación de chunks similares usando Jaccard similarity.
+    
+    Mantiene solo el primer chunk de cada grupo de duplicados.
+    
+    Args:
+        chunks: Lista de payloads (dicts con 'content' o similar)
+        threshold: Umbral de similaridad Jaccard (0-1)
+    
+    Returns:
+        Lista de chunks deduplicados
+    """
+    if not chunks:
+        return []
+    
+    def jaccard_similarity(text1: str, text2: str) -> float:
+        """Calcula similaridad Jaccard entre dos textos."""
+        set1 = set(text1.lower().split())
+        set2 = set(text2.lower().split())
+        
+        intersection = len(set1 & set2)
+        union = len(set1 | set2)
+        
+        return intersection / union if union > 0 else 0.0
+    
+    deduplicated = []
+    seen_indices = set()
+    
+    for i, chunk in enumerate(chunks):
+        if i in seen_indices:
+            continue
+        
+        # Extraer texto del chunk (puede ser dict o string)
+        text_i = chunk.get('content') if isinstance(chunk, dict) else str(chunk)
+        
+        # Agregar el chunk actual
+        deduplicated.append(chunk)
+        seen_indices.add(i)
+        
+        # Marcar similares para omitir
+        for j in range(i + 1, len(chunks)):
+            if j in seen_indices:
+                continue
+            
+            text_j = chunks[j].get('content') if isinstance(chunks[j], dict) else str(chunks[j])
+            
+            similarity = jaccard_similarity(text_i, text_j)
+            if similarity >= threshold:
+                print(f"  🔄 Chunk {j} es similar a {i} (Jaccard: {similarity:.2%}), se omite")
+                seen_indices.add(j)
+    
+    print(f"  📊 Deduplicación: {len(chunks)} → {len(deduplicated)} chunks")
+    return deduplicated
+
+
 def search_vectors(bot_id: int, query: str = "", limit: int = 5):
     """
+    ✅ SOLUTION #2: Búsqueda de vectores con filtro bot_id asegurado.
+    
     Busca los vectores más relevantes para un bot dado y un query opcional.
     Si query está vacío, trae los top documentos del bot.
+    Incluye deduplicación automática de resultados similares.
+    
+    IMPORTANTE: NUNCA usa scroll (causa OutputTooSmall). SIEMPRE usa search.
+    
+    Args:
+        bot_id: ID del bot (aislamiento crítico)
+        query: Texto de búsqueda (opcional)
+        limit: Cantidad máxima de resultados (máximo 5 para evitar OutputTooSmall)
+    
+    Returns:
+        Lista de payloads deduplicados (solo del bot_id especificado)
     """
     client = get_or_create_vector_store()
     vector = get_embedding(query) if query else None
-
-    if vector:
-        results = client.search(
-            collection_name="voia_vectors",
-            query_vector=vector,
-            limit=limit,
-            query_filter={
-                "must": [{"key": "bot_id", "match": {"value": bot_id}}]
-            }
-        )
-        return [r.payload for r in results]
-    else:
-        points, _ = client.scroll(collection_name="voia_vectors", limit=limit)
-        return [p.payload for p in points if p.payload.get("bot_id") == bot_id]
+    
+    # ✅ FIX: Limitar el limit a 5 máximo para evitar error OutputTooSmall de Qdrant
+    safe_limit = min(max(1, limit), 5)
+    
+    try:
+        # ✅ SIEMPRE usar search, NUNCA scroll (scroll causa OutputTooSmall)
+        if not vector:
+            # Si no hay query, usar embedding dummy para traer resultados top
+            vector = [0.0] * 384
+        
+        # Búsqueda con filtro bot_id explícito - con reintento
+        max_retries = 2
+        payloads = []
+        
+        for attempt in range(max_retries):
+            try:
+                results = client.search(
+                    collection_name="voia_vectors",
+                    query_vector=vector,
+                    limit=safe_limit,
+                    query_filter={
+                        "must": [{"key": "bot_id", "match": {"value": bot_id}}]
+                    }
+                )
+                payloads = [r.payload for r in results]
+                break
+            except Exception as search_error:
+                error_str = str(search_error)
+                print(f"⚠️ Intento {attempt + 1}/{max_retries} falló: {error_str[:100]}")
+                
+                if attempt == max_retries - 1:
+                    print(f"❌ Error persistente en search_vectors: {error_str[:150]}")
+                    return []
+                
+                # Esperar un poco antes de reintentar
+                import time
+                time.sleep(0.1)
+        
+        # ✅ Validar payloads (algunos pueden ser corruptos)
+        valid_payloads = []
+        for payload in payloads:
+            try:
+                if isinstance(payload, dict) and payload.get("bot_id") == bot_id:
+                    valid_payloads.append(payload)
+                else:
+                    print(f"⚠️ Payload inválido ignorado")
+            except Exception as e:
+                print(f"⚠️ Error validando payload: {str(e)[:80]}")
+                continue
+        
+        # ✅ Deduplicación automática antes de retornar
+        deduplicated = _deduplicate_similar_chunks(valid_payloads, threshold=0.95)
+        
+        print(f"✅ search_vectors: Encontrados {len(deduplicated)}/{len(payloads)} resultados válidos para bot_id={bot_id}")
+        return deduplicated
+    
+    except Exception as e:
+        error_msg = str(e)[:150]
+        print(f"❌ Error en search_vectors: {error_msg}")
+        # Retornar lista vacía en lugar de lanzar excepción
+        return []
 import re
 from typing import Dict, List
 
