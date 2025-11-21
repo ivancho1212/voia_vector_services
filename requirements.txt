@@ -9,3 +9,5 @@ requests
 qdrant-client
 sentence_transformers
 beautifulsoup4
+slowapi
+redis
