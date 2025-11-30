@@ -767,3 +767,14 @@ def list_all_points(limit=10):
         limit=limit
     )
     return points
+
+from fastapi import Request, Response
+import numpy as np
+
+@app.post("/embed")
+async def embed_endpoint(request: Request):
+    text = await request.body()
+    text_str = text.decode("utf-8")
+    vector = get_embedding(text_str)
+    arr = np.array(vector, dtype=np.float32)
+    return Response(content=arr.tobytes(), media_type="application/octet-stream")

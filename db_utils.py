@@ -8,6 +8,11 @@ from sentence_transformers import SentenceTransformer
 load_dotenv()
 
 def get_connection():
+    print("DB_HOST:", os.getenv("DB_HOST"))
+    print("DB_PORT:", os.getenv("DB_PORT"))
+    print("DB_USER:", os.getenv("DB_USER"))
+    print("DB_PASSWORD:", os.getenv("DB_PASSWORD"))
+    print("DB_NAME:", os.getenv("DB_NAME"))
     return mysql.connector.connect(
         host=os.getenv("DB_HOST"),
         port=os.getenv("DB_PORT"),

@@ -1,12 +1,20 @@
 # voia_vector_services/main.py
-from fastapi import FastAPI, Query, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Query, HTTPException, BackgroundTasks, Request, Response
 from dotenv import load_dotenv
 import os
 import asyncio
 from datetime import datetime, timedelta
+import numpy as np
 
 # Cargar variables de entorno
 load_dotenv()
+import pathlib
+print("DEBUG ENV FILES:", list(pathlib.Path().glob(".env")))
+print("DB_HOST:", os.getenv("DB_HOST"))
+print("DB_PORT:", os.getenv("DB_PORT"))
+print("DB_USER:", os.getenv("DB_USER"))
+print("DB_PASSWORD:", os.getenv("DB_PASSWORD"))
+print("DB_NAME:", os.getenv("DB_NAME"))
 from voia_vector_services.process_documents import process_pending_documents # noqa
 from voia_vector_services.process_urls import process_pending_urls # noqa
 from voia_vector_services.process_custom_texts import process_pending_custom_texts # noqa
@@ -16,6 +24,7 @@ from voia_vector_services.rate_limiting import limiter, setup_rate_limiting, LIM
 from voia_vector_services.snapshot_manager import SnapshotManager # noqa
 from voia_vector_services.sync_manager import QdrantMySQLSynchronizer # noqa
 from voia_vector_services.recovery_manager import RecoveryManager # noqa
+from voia_vector_services.embedder import get_embedding
 
 from pydantic import BaseModel
 
@@ -157,7 +166,7 @@ def process_all(request):
 
 @app.get("/process_documents")
 @limiter.limit(LIMITS["process_documents"])
-def process_documents_endpoint(request, bot_id: int = Query(..., description="ID del bot para procesar documentos")):
+def process_documents_endpoint(request: Request, bot_id: int = Query(..., description="ID del bot para procesar documentos")):
     try:
         print(f"🚀 Procesando PDFs para el bot_id: {bot_id}...")
         process_pending_documents(bot_id)
@@ -168,7 +177,7 @@ def process_documents_endpoint(request, bot_id: int = Query(..., description="ID
 
 @app.get("/process_urls")
 @limiter.limit(LIMITS["process_urls"])
-def process_urls_endpoint(request, bot_id: int = Query(..., description="ID del bot para procesar URLs")):
+def process_urls_endpoint(request: Request, bot_id: int = Query(..., description="ID del bot para procesar URLs")):
     try:
         print(f"🌐 Procesando URLs para el bot_id: {bot_id}...")
         process_pending_urls(bot_id)
@@ -179,7 +188,7 @@ def process_urls_endpoint(request, bot_id: int = Query(..., description="ID del 
 
 @app.get("/process_texts")
 @limiter.limit(LIMITS["process_texts"])
-def process_texts_endpoint(request, bot_id: int = Query(..., description="ID del bot para procesar textos")):
+def process_texts_endpoint(request: Request, bot_id: int = Query(..., description="ID del bot para procesar textos")):
     try:
         print(f"📝 Procesando textos para el bot_id: {bot_id}...")
         process_pending_custom_texts(bot_id)
@@ -702,4 +711,12 @@ def health_persistence_endpoint(request):
             "status": "unhealthy",
             "error": str(e)
         }
+
+@app.post("/embed")
+async def embed_endpoint(request: Request):
+    text = await request.body()
+    text_str = text.decode("utf-8")
+    vector = get_embedding(text_str)
+    arr = np.array(vector, dtype=np.float32)
+    return Response(content=arr.tobytes(), media_type="application/octet-stream")
 
